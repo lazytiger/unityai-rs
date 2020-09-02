@@ -13,8 +13,6 @@ mod deserializer;
 #[derive(Debug)]
 pub enum UnityDeError {
     Other(String),
-    ParseIntError(std::num::ParseIntError),
-    ParseFloatError(std::num::ParseFloatError),
     Eof,
 }
 
@@ -34,26 +32,12 @@ impl std::fmt::Display for UnityDeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             UnityDeError::Other(msg) => f.write_str(msg),
-            UnityDeError::ParseIntError(err) => f.write_str(format!("{}", err).as_str()),
-            UnityDeError::ParseFloatError(err) => f.write_str(format!("{}", err).as_str()),
             UnityDeError::Eof => f.write_str("end of file"),
         }
     }
 }
 
 pub type Result<T> = std::result::Result<T, UnityDeError>;
-
-impl std::convert::From<std::num::ParseIntError> for UnityDeError {
-    fn from(err: ParseIntError) -> Self {
-        UnityDeError::ParseIntError(err)
-    }
-}
-
-impl std::convert::From<std::num::ParseFloatError> for UnityDeError {
-    fn from(err: ParseFloatError) -> Self {
-        UnityDeError::ParseFloatError(err)
-    }
-}
 
 #[derive(Debug)]
 pub struct Vector3f {
