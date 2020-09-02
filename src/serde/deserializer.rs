@@ -1,20 +1,38 @@
 use std::str::{Chars, FromStr};
 
+use regex::Regex;
 use serde::{Deserialize, Deserializer};
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
-use super::Error;
+use super::UnityDeError;
+
+#[derive(Copy, Clone)]
+enum DeStatus {
+    MultipleElement,
+    SingleElement,
+    StructKey,
+    StructValue,
+    Invalid,
+}
 
 pub struct UnityDeserializer<'de> {
     tab: usize,
     data: &'de str,
     offset: usize,
-    skip_line: bool,
+    status: Vec<DeStatus>,
+    regex: Regex,
 }
 
 impl<'de> UnityDeserializer<'de> {
     fn from_str(data: &'de str) -> UnityDeserializer<'de> {
-        UnityDeserializer { data, tab: 0, offset: 0, skip_line: true }
+        let mut status = Vec::new();
+        status.push(DeStatus::Invalid);
+        let regex = Regex::new(r"data \([0-9a-zA-Z ]+\) #[0-9]+:").unwrap();
+        UnityDeserializer { data, tab: 0, offset: 0, status, regex }
+    }
+
+    fn current_status(&self) -> DeStatus {
+        *self.status.last().unwrap()
     }
 
     fn tab_count(&self) -> usize {
@@ -56,10 +74,18 @@ impl<'de> UnityDeserializer<'de> {
     }
 
     fn skip_line(&mut self) {
-        self.skip_until('\n');
+        if let DeStatus::MultipleElement = self.current_status() {} else {
+            self.skip_until('\n');
+        }
     }
 
-    fn get_str(&self, len: usize) -> &'de str {
+    fn get_str(&mut self, len: usize) -> &'de str {
+        let ret = &self.data[self.offset..self.offset + len];
+        self.skip(len);
+        ret
+    }
+
+    fn peek_str(&self, len: usize) -> &'de str {
         &self.data[self.offset..self.offset + len]
     }
 
@@ -74,16 +100,20 @@ impl<'de> UnityDeserializer<'de> {
         name
     }
 
-    fn get_type(&mut self) -> &str {
-        if self.chars().nth(0).unwrap() != '(' {
-            //TODO
-        } else {
-            self.skip(1);
-        }
-        let pos = self.count_until(')');
-        let typ = self.get_str(pos);
-        self.skip(pos + 1);
-        typ
+    fn peek_type(&mut self) -> super::Result<&str> {
+        let line = self.peek_line();
+        let (bgn, _) = line.char_indices().rfind(|(_, c)| *c == '(').ok_or_else(|| UnityDeError {})?;
+        let end = line[bgn + 1..].chars().position(|c| c == ')').ok_or_else(|| UnityDeError {})?;
+        Ok(&line[bgn + 1..bgn + end + 1])
+    }
+
+    fn get_identifier(&mut self) -> super::Result<&str> {
+        let pos = self.chars().position(|c| !c.is_ascii_alphanumeric() && c != '_').ok_or_else(|| UnityDeError {})?;
+        Ok(self.get_str(pos))
+    }
+
+    fn get_char(&mut self) -> char {
+        self.chars().nth(0).unwrap()
     }
 
     fn get_content(&mut self) -> &str {
@@ -100,9 +130,7 @@ impl<'de> UnityDeserializer<'de> {
         } else {
             panic!("parse failed")
         };
-        if self.skip_line {
-            self.skip_line();
-        }
+        self.skip_line();
         t
     }
 
@@ -122,8 +150,18 @@ impl<'de> UnityDeserializer<'de> {
     }
 
     fn skip_array_header(&mut self) {
+        //log::trace!("skip array header");
         let count = self.count_until(':');
         self.skip(count + 2);
+    }
+
+    fn peek_line(&self) -> &str {
+        let pos = self.chars().position(|c| c == '\r' || c == '\n').unwrap();
+        self.peek_str(pos)
+    }
+
+    fn is_seq_multi(&self) -> bool {
+        self.regex.is_match(self.peek_line())
     }
 }
 
@@ -135,37 +173,50 @@ pub fn from_str<'a, T: Deserialize<'a>>(data: &'a str) -> super::Result<T> {
     if de.data.is_empty() {
         Ok(t)
     } else {
-        Err(Error {})
+        log::error!("trailing data found");
+        Err(UnityDeError {})
     }
 }
 
 impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
-    type Error = Error;
+    type Error = UnityDeError;
 
     fn deserialize_any<V>(mut self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
-        //TODO ignored fields go to here
+        //TODO ignore unknown format
+        //There are two types of line.
         //1. name content type
         //2. content type
-        log::trace!("deserialize_any:{}", self.get_str(10));
-        if self.compact() {
-            return self.deserialize_identifier(visitor);
+        match self.current_status() {
+            DeStatus::StructKey => {
+                log::trace!("deserialize_any:StructKey, input='{}'", self.peek_line());
+                return self.deserialize_identifier(visitor);
+            }
+            DeStatus::StructValue | DeStatus::SingleElement => {
+                log::trace!("deserialize_any:StructValue, input='{}'", self.peek_line());
+            }
+            DeStatus::MultipleElement => {
+                log::trace!("deserialize_any:PrimitiveElement, input='{}'", self.peek_line());
+            }
+            DeStatus::Invalid => {
+                unreachable!("invalid status")
+            }
         }
         let offset = self.offset;
-        let content = self.get_content();
-        if content == "" {
-            self.deserialize_struct("", &[], visitor)
-        } else {
-            self.skip(1);
-            let typ: String = self.get_type().into();
-            self.set_offset(offset);
-            match typ.as_str() {
-                "SInt64" => self.deserialize_i64(visitor),
-                "unsigned int" => self.deserialize_u32(visitor),
-                "int" => self.deserialize_i32(visitor),
-                "string" => self.deserialize_string(visitor),
-                _ => Err(Error {}),
-            }
+        self.get_content();
+        let typ: String = self.peek_type()?.into();
+        log::trace!("found type:{}", typ);
+        self.offset = offset;
+        match typ.as_str() {
+            "vector" => self.deserialize_seq(visitor),
+            "SInt64" => self.deserialize_i64(visitor),
+            "unsigned int" => self.deserialize_u32(visitor),
+            "int" => self.deserialize_i32(visitor),
+            "string" => self.deserialize_string(visitor),
+            "UInt8" => self.deserialize_u8(visitor),
+            "float" => self.deserialize_f32(visitor),
+            "Vector3f" => self.deserialize_str(visitor),
+            _ => self.deserialize_struct("", &[], visitor),
         }
     }
 
@@ -231,9 +282,10 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_str<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
-        let id = self.get_string();
-        log::trace!("id:{}", id);
-        visitor.visit_str(id)
+        let id = self.peek_line();
+        let ret = visitor.visit_str(id);
+        self.skip_line();
+        ret
     }
 
     fn deserialize_string<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
@@ -278,22 +330,20 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
     fn deserialize_seq<V>(mut self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
         //begin as ' (vector)'
-        log::trace!("seq:{}", self.get_str(10));
-        self.skip_line(); //current:\t+ size xxx (int)
+        log::trace!("deserialize_seq:input='{}'", self.peek_line());
+        self.skip_line();
+
+        //current:\t+ size xxx (int)
+        log::trace!("deserialize_seq:input='{}'", self.peek_line());
         self.skip(self.tab_count());
         self.get_string();
-        log::trace!("seq:{}", self.get_str(10));
+        //57 (int)
+        log::trace!("deserialize_seq:input='{}'", self.peek_line());
         let count: usize = self.get_content_by();
-        //current:data ||
-        log::trace!("-------------seq begin:{}---------------", self.get_str(10));
-        self.skip(self.tab_count());
-        self.get_string();
-        let simple = self.get_content() != "";
-        log::trace!("-----------seq type:{}", simple);
-        self.skip_line = false;
-        let access = UnitySeqAccess::new(&mut self, count, simple);
+        self.tab += 1;
+        let access = UnitySeqAccess::new(&mut self, count);
         let ret = visitor.visit_seq(access);
-        self.skip_line = true;
+        self.tab -= 1;
         ret
     }
 
@@ -307,20 +357,26 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
         unimplemented!("deserialize_tuple_struct")
     }
 
-    fn deserialize_map<V>(mut self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
+    fn deserialize_map<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
         unimplemented!("deserialize_map")
     }
 
     fn deserialize_struct<V>(mut self, name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
-        self.skip(1);
-        let tab = self.tab;
-        let id = self.get_string();
-        if name != id {
-            log::trace!("{} != {}", name, id);
+        //There two type of lines
+        //1. TypeName
+        //2. (TypeName)
+        //3. data (TypeName)
+        if self.get_char() == 'd' {
+            self.skip(5);
         }
-        log::trace!("------begin struct:{}:{}:{}-------", id, name, tab+1);
+        log::trace!("deserialize_struct:input='{}'", self.peek_line());
+        let tab = self.tab;
+        self.skip(1);
+        let id = self.peek_type()?;
+        log::trace!("deserialize_struct: id={}, tab = {}", id, tab+1);
+        self.skip_line();
         self.tab += 1;
         let access = UnityMapAccess::new(&mut self);
         let ret = visitor.visit_map(access);
@@ -335,11 +391,15 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
-        self.deserialize_str(visitor)
+        //input='identifier data (type)'
+        log::trace!("deserialize_identifier:input='{}'", self.peek_line());
+        let id = self.get_string();
+        visitor.visit_str(id)
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error> where
         V: Visitor<'de> {
+        log::trace!("deserialize_ignored_any:input='{}'", self.peek_line());
         self.deserialize_any(visitor)
     }
 }
@@ -356,25 +416,33 @@ impl<'a, 'de> UnityMapAccess<'a, 'de> {
 }
 
 impl<'a, 'de> MapAccess<'de> for UnityMapAccess<'a, 'de> {
-    type Error = Error;
+    type Error = UnityDeError;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<<K as DeserializeSeed<'de>>::Value>, Self::Error> where
         K: DeserializeSeed<'de> {
         let tab = self.de.tab_count();
+        //input='\t\tName data (type)'
+        log::trace!("next_key_seed:input='{}'", self.de.peek_line());
         if tab < self.tab {
             log::trace!("-----end struct:{}----", self.tab);
             return Ok(None);
         }
 
-        log::trace!("next_key_seed:{}", self.de.get_str(10));
         self.de.skip(tab);
-        seed.deserialize(&mut *self.de).map(Some)
+        self.de.status.push(DeStatus::StructKey);
+        let ret = seed.deserialize(&mut *self.de).map(Some);
+        self.de.status.pop();
+        ret
     }
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<<V as DeserializeSeed<'de>>::Value, Self::Error> where
         V: DeserializeSeed<'de> {
-        log::trace!("next_value_seed:{}", self.de.get_str(10));
-        seed.deserialize(&mut *self.de)
+        //input='data (type)'
+        log::trace!("next_value_seed:input='{}'", self.de.peek_line());
+        self.de.status.push(DeStatus::StructValue);
+        let ret = seed.deserialize(&mut *self.de);
+        self.de.status.pop();
+        ret
     }
 }
 
@@ -383,16 +451,16 @@ struct UnitySeqAccess<'a, 'de: 'a> {
     de: &'a mut UnityDeserializer<'de>,
     current: usize,
     count: usize,
-    simple: bool,
+    multiple: bool,
 }
 
 impl<'a, 'de> UnitySeqAccess<'a, 'de> {
-    fn new(de: &'a mut UnityDeserializer<'de>, count: usize, simple: bool) -> Self {
+    fn new(de: &'a mut UnityDeserializer<'de>, count: usize) -> Self {
         UnitySeqAccess {
             tab: de.tab,
             current: 0,
+            multiple: false,
             de,
-            simple,
             count,
         }
     }
@@ -401,19 +469,42 @@ impl<'a, 'de> UnitySeqAccess<'a, 'de> {
 const kArrayMemberColumns: usize = 25;
 
 impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
-    type Error = Error;
+    type Error = UnityDeError;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<<T as DeserializeSeed<'de>>::Value>, Self::Error> where
         T: DeserializeSeed<'de> {
+        //input='\t\tdata  (type)'
+        //input='\t\tdata (type) #0: value value ...'
+        //input='\t\tdata (data,data) (type)...'
+        if self.current == 0 && self.count != 0 {
+            if self.de.is_seq_multi() {
+                //TODO Vector3f
+                self.multiple = true;
+                self.de.status.push(DeStatus::MultipleElement);
+            } else {
+                self.multiple = false;
+                self.de.status.push(DeStatus::SingleElement);
+            }
+            //log::trace!("next_element_seed:input='{}'", self.de.get_line());
+        }
         if self.current == self.count {
-            log::trace!("------seq end {} {}------", self.current, self.count);
+            log::trace!("seq end at {}", self.current);
+            if self.count != 0 {
+                self.de.status.pop();
+            }
+            self.de.skip_line();
             return Ok(None);
         }
 
-        if self.simple && self.current % kArrayMemberColumns == 0 {
-            self.de.skip_array_header();
+        if self.multiple {
+            if self.current % kArrayMemberColumns == 0 {
+                self.de.skip_array_header();
+            }
+        } else {
+            self.de.skip(self.tab);
         }
         self.current += 1;
+        //log::trace!("next_element_seed:input='{}'", self.de.get_line());
         seed.deserialize(&mut *self.de).map(Some)
     }
 }

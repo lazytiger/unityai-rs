@@ -3,18 +3,19 @@ use std::io::Read;
 
 use serde::Deserialize;
 
-use unityai::serde::UnityDeserializer;
+use unityai::serde::{UnityDeserializer, Vector3f};
 
 #[derive(Deserialize, Debug)]
 struct NavMeshData {
     m_NavMeshTiles: Vec<NavMeshTileData>,
     m_NavMeshBuildSetting: NavMeshBuildSetting,
+    m_HeightMeshes: Vec<HeightMeshData>,
 }
 
 #[derive(Deserialize, Debug)]
 struct NavMeshTileData {
     m_MeshData: Vec<u8>,
-    m_Hash: Hash128,
+    //m_Hash: Hash128,
 }
 
 #[derive(Deserialize, Debug)]
@@ -37,7 +38,13 @@ struct NavMeshBuildSetting {
     accuratePlacement: i32,
 }
 
-fn init_log() ->Result<(), fern::InitError> {
+#[derive(Deserialize, Debug)]
+struct HeightMeshData {
+    m_Vertices: Vec<Vector3f>,
+    m_Indices: Vec<u32>,
+}
+
+fn init_log() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
