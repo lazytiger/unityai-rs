@@ -1,7 +1,7 @@
 use std::str::{Chars, FromStr};
 
 use regex::Regex;
-use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
+use serde::de::{DeserializeSeed, Error, Expected, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use super::UnityDeError;
@@ -247,9 +247,10 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
                     "unsigned int" => self.deserialize_u32(visitor),
                     "int" => self.deserialize_i32(visitor),
                     "string" => self.deserialize_string(visitor),
-                    "UInt8" => self.deserialize_u8(visitor),
+                    "UInt8" | "unsigned char" => self.deserialize_u8(visitor),
                     "float" => self.deserialize_f32(visitor),
                     "Vector3f" => self.deserialize_str(visitor),
+                    "unsigned short|UInt16" => self.deserialize_u16(visitor),
                     _ => self.deserialize_struct("", &[], visitor),
                 }
             }
@@ -419,18 +420,24 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
         log::trace!("deserialize_seq:input='{}'", self.peek_line());
         self.skip_line();
 
-        //current:\t+ size xxx (int)
-        log::trace!("deserialize_seq:input='{}'", self.peek_line());
-        self.skip_tab(self.tab_count())?;
-        if self.get_identifier()? != "size" {
-            return Err(UnityDeError::custom("no size found"));
-        }
-        // 57 (int)
-        log::trace!("deserialize_seq:input='{}'", self.peek_line());
-        self.skip_space()?;
-        let count: usize = self.get_content_by()?;
+        let typ = format!("{}", &visitor as &Expected);
+        let (count, faked) = if typ.as_str() == "Hash128" {
+            (16, true)
+        } else {
+            //current:\t+ size xxx (int)
+            log::trace!("deserialize_seq:input='{}'", self.peek_line());
+            self.skip_tab(self.tab_count())?;
+            if self.get_identifier()? != "size" {
+                return Err(UnityDeError::custom("no size found"));
+            }
+            // 57 (int)
+            log::trace!("deserialize_seq:input='{}'", self.peek_line());
+            self.skip_space()?;
+            (self.get_content_by()?, false)
+        };
+
         self.tab += 1;
-        let access = UnitySeqAccess::new(&mut self, count);
+        let access = UnitySeqAccess::new(&mut self, count, faked);
         let ret = visitor.visit_seq(access);
         self.tab -= 1;
         ret
@@ -479,12 +486,9 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
         //1. TypeName
         //2. (TypeName)
         //3. data (TypeName)
-        if self.peek_str(4) == "data" {
-            self.skip(5);
-        }
         log::trace!("deserialize_struct:input='{}'", self.peek_line());
         let tab = self.tab;
-        self.skip(1);
+        self.skip_space()?;
         let id = if self.root {
             self.root = false;
             self.get_identifier()?
@@ -572,7 +576,7 @@ impl<'a, 'de> MapAccess<'de> for UnityMapAccess<'a, 'de> {
             return Ok(None);
         }
 
-        self.de.skip(tab);
+        self.de.skip_tab(tab)?;
         self.de.status.push(DeStatus::StructKey);
         let ret = seed.deserialize(&mut *self.de).map(Some);
         self.de.status.pop();
@@ -607,16 +611,18 @@ struct UnitySeqAccess<'a, 'de: 'a> {
     current: usize,
     count: usize,
     multiple: bool,
+    faked: bool,
 }
 
 impl<'a, 'de> UnitySeqAccess<'a, 'de> {
-    fn new(de: &'a mut UnityDeserializer<'de>, count: usize) -> Self {
+    fn new(de: &'a mut UnityDeserializer<'de>, count: usize, faked: bool) -> Self {
         UnitySeqAccess {
             tab: de.tab,
             current: 0,
             multiple: false,
             de,
             count,
+            faked,
         }
     }
 }
@@ -662,7 +668,13 @@ impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
             }
             self.de.skip_space()?;
         } else {
-            self.de.skip(self.tab);
+            self.de.skip_tab(self.tab)?;
+            if self.de.get_identifier()? != "data" && !self.faked {
+                return Err(UnityDeError::custom(
+                    format! {"no data keyword found in seq:{}", self.de.peek_line()},
+                ));
+            }
+            self.de.skip_space()?;
         }
         self.current += 1;
         log::trace!("next_element_seed:input='{}'", self.de.peek_line());

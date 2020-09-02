@@ -1,6 +1,4 @@
-use std::num::{ParseFloatError, ParseIntError};
-
-use serde::de::{Error, Unexpected, Visitor};
+use serde::de::{Error, SeqAccess, Unexpected, Visitor};
 use serde::export::fmt::Display;
 use serde::export::Formatter;
 use serde::{Deserialize, Deserializer};
@@ -105,5 +103,45 @@ impl<'de> Deserialize<'de> for Vector3f {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_str(Vector3fVistor)
+    }
+}
+
+#[derive(Debug)]
+pub struct Hash128 {
+    bytes: [u8; 16],
+}
+
+struct Hash128Visitor;
+
+impl<'de> Visitor<'de> for Hash128Visitor {
+    type Value = Hash128;
+
+    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+        formatter.write_str("Hash128")
+    }
+
+    fn visit_seq<A>(
+        self,
+        mut seq: A,
+    ) -> std::result::Result<Self::Value, <A as SeqAccess<'de>>::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut hash = Hash128 { bytes: [0u8; 16] };
+        for i in 0..16 {
+            hash.bytes[i] = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::custom(format!("")))?;
+        }
+        Ok(hash)
+    }
+}
+
+impl<'de> Deserialize<'de> for Hash128 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, <D as Deserializer<'de>>::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(Hash128Visitor)
     }
 }

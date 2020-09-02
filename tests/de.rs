@@ -3,24 +3,24 @@ use std::io::Read;
 
 use serde::Deserialize;
 
-use unityai::serde::Vector3f;
+use unityai::serde::{Hash128, Vector3f};
 
 #[derive(Deserialize, Debug)]
 struct NavMeshData {
     m_NavMeshTiles: Vec<NavMeshTileData>,
     m_NavMeshBuildSettings: NavMeshBuildSettings,
     m_HeightMeshes: Vec<HeightMeshData>,
+    m_OffMeshLinks: Vec<AutoOffMeshLinkData>,
+    m_SourceBounds: AABB,
+    m_Rotation: Quaternionf,
+    m_Position: Vector3f,
+    m_AgentTypeID: i32,
 }
 
 #[derive(Deserialize, Debug)]
 struct NavMeshTileData {
     m_MeshData: Vec<u8>,
-    //m_Hash: Hash128,
-}
-
-#[derive(Deserialize, Debug)]
-struct Hash128 {
-    bytes: [u8; 16],
+    m_Hash: Hash128,
 }
 
 #[derive(Deserialize, Debug)]
@@ -42,6 +42,40 @@ struct NavMeshBuildSettings {
 struct HeightMeshData {
     m_Vertices: Vec<Vector3f>,
     m_Indices: Vec<u32>,
+    m_Bounds: AABB,
+    m_Nodes: Vec<HeightMeshBVNode>,
+}
+
+#[derive(Deserialize, Debug)]
+struct HeightMeshBVNode {
+    min: Vector3f,
+    max: Vector3f,
+    i: i32,
+    n: i32,
+}
+
+#[derive(Deserialize, Debug)]
+struct AABB {
+    m_Center: Vector3f,
+    m_Extent: Vector3f,
+}
+
+#[derive(Deserialize, Debug)]
+struct Quaternionf {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+}
+
+#[derive(Deserialize, Debug)]
+struct AutoOffMeshLinkData {
+    m_Start: Vector3f,
+    m_End: Vector3f,
+    m_Radius: f32,
+    m_LinkType: u16,
+    m_Area: u8,
+    m_LinkDirection: u8,
 }
 
 fn init_log() -> Result<(), fern::InitError> {
