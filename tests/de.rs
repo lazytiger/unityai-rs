@@ -8,7 +8,7 @@ use unityai::serde::{UnityDeserializer, Vector3f};
 #[derive(Deserialize, Debug)]
 struct NavMeshData {
     m_NavMeshTiles: Vec<NavMeshTileData>,
-    m_NavMeshBuildSetting: NavMeshBuildSetting,
+    m_NavMeshBuildSettings: NavMeshBuildSettings,
     m_HeightMeshes: Vec<HeightMeshData>,
 }
 
@@ -24,7 +24,7 @@ struct Hash128 {
 }
 
 #[derive(Deserialize, Debug)]
-struct NavMeshBuildSetting {
+struct NavMeshBuildSettings {
     agentTypeID: i32,
     agentRadius: f32,
     agentHeight: f32,
@@ -62,13 +62,14 @@ fn init_log() -> Result<(), fern::InitError> {
     Ok(())
 }
 
-
 #[test]
 fn test_de() {
     init_log().expect("init_log");
     let mut file = File::open("tests/Navmesh.asset.txt").expect("open file");
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).expect("read_to_end");
-    let data: NavMeshData = unityai::serde::from_str(unsafe { String::from_utf8_unchecked(buffer) }.as_str()).expect("deserialize NavMeshData");
+    let data: NavMeshData =
+        unityai::serde::from_str(unsafe { String::from_utf8_unchecked(buffer) }.as_str())
+            .expect("deserialize NavMeshData");
     println!("data is {:?}", data);
 }
