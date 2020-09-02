@@ -3,7 +3,7 @@ use std::io::Read;
 
 use serde::Deserialize;
 
-use unityai::serde::{UnityDeserializer, Vector3f};
+use unityai::serde::Vector3f;
 
 #[derive(Deserialize, Debug)]
 struct NavMeshData {
@@ -56,7 +56,7 @@ fn init_log() -> Result<(), fern::InitError> {
                 message
             ))
         })
-        .level(log::LevelFilter::Trace)
+        .level(log::LevelFilter::Debug)
         .chain(std::io::stdout())
         .apply()?;
     Ok(())

@@ -83,7 +83,7 @@ impl<'de> UnityDeserializer<'de> {
 
     fn skip_tab(&mut self, count: usize) -> super::Result<()> {
         let mut it = self.chars();
-        for i in 0..count {
+        for _ in 0..count {
             if it.next().ok_or_else(|| UnityDeError::Eof)? != '\t' {
                 return Err(UnityDeError::custom(format!(
                     "tab not match:{}",
@@ -126,20 +126,6 @@ impl<'de> UnityDeserializer<'de> {
 
     fn peek_str(&self, len: usize) -> &'de str {
         &self.data[self.offset..self.offset + len]
-    }
-
-    fn get_string(&mut self) -> &str {
-        let pos = self
-            .chars()
-            .position(|c| c == ' ' || c == '\r' || c == '\n')
-            .expect("get_string");
-        let name = self.get_str(pos);
-        if self.chars().nth(pos).unwrap() == ' ' {
-            self.skip(pos + 1);
-        } else {
-            self.skip_line();
-        }
-        name
     }
 
     fn peek_type(&mut self) -> super::Result<&str> {
@@ -245,7 +231,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
             DeStatus::Invalid => unreachable!("invalid status"),
             _ => {
                 self.type_name = if let DeStatus::MultipleElement = self.current_status() {
-                    "name"
+                    self.type_name.as_str()
                 } else {
                     self.peek_type()?
                 }
@@ -347,7 +333,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
         visitor.visit_f64(self.get_content_by()?)
     }
 
-    fn deserialize_char<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
+    fn deserialize_char<V>(self, _visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -375,28 +361,28 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
         visitor.visit_string(content)
     }
 
-    fn deserialize_bytes<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
+    fn deserialize_bytes<V>(self, _visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
         unimplemented!("deserialize_bytes")
     }
 
-    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
+    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
         unimplemented!("deserialize_byte_buf")
     }
 
-    fn deserialize_option<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
+    fn deserialize_option<V>(self, _visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
         unimplemented!("deserialize_option")
     }
 
-    fn deserialize_unit<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
+    fn deserialize_unit<V>(self, _visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -405,8 +391,8 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_unit_struct<V>(
         self,
-        name: &'static str,
-        visitor: V,
+        _name: &'static str,
+        _visitor: V,
     ) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -416,8 +402,8 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_newtype_struct<V>(
         self,
-        name: &'static str,
-        visitor: V,
+        _name: &'static str,
+        _visitor: V,
     ) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -452,8 +438,8 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_tuple<V>(
         self,
-        len: usize,
-        visitor: V,
+        _len: usize,
+        _visitor: V,
     ) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -463,9 +449,9 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_tuple_struct<V>(
         self,
-        name: &'static str,
-        len: usize,
-        visitor: V,
+        _name: &'static str,
+        _len: usize,
+        _visitor: V,
     ) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -473,7 +459,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
         unimplemented!("deserialize_tuple_struct")
     }
 
-    fn deserialize_map<V>(self, visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
+    fn deserialize_map<V>(self, _visitor: V) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -483,7 +469,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
     fn deserialize_struct<V>(
         mut self,
         name: &'static str,
-        fields: &'static [&'static str],
+        _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
@@ -522,9 +508,9 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
 
     fn deserialize_enum<V>(
         self,
-        name: &'static str,
-        variants: &'static [&'static str],
-        visitor: V,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
     ) -> Result<<V as Visitor<'de>>::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -635,7 +621,7 @@ impl<'a, 'de> UnitySeqAccess<'a, 'de> {
     }
 }
 
-const kArrayMemberColumns: usize = 25;
+const ArrayMemberColumns: usize = 25;
 
 impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
     type Error = UnityDeError;
@@ -652,7 +638,7 @@ impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
         //input='\t\tdata (data,data) (type)...'
         if self.current == 0 && self.count != 0 {
             if self.de.is_seq_multi() {
-                //TODO Vector3f
+                self.de.type_name = self.de.peek_type()?.into();
                 self.multiple = true;
                 self.de.status.push(DeStatus::MultipleElement);
             } else {
@@ -671,10 +657,10 @@ impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
         }
 
         if self.multiple {
-            if self.current % kArrayMemberColumns == 0 {
+            if self.current % ArrayMemberColumns == 0 {
                 self.de.skip_array_header();
             }
-            self.de.skip_space();
+            self.de.skip_space()?;
         } else {
             self.de.skip(self.tab);
         }
