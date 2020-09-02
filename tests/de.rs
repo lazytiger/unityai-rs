@@ -66,6 +66,8 @@ fn init_log() -> Result<(), fern::InitError> {
 fn test_de() {
     init_log().expect("init_log");
     let mut file = File::open("tests/Navmesh.asset.txt").expect("open file");
+    //let mut file = File::open("tests/CSZ.asset.txt").expect("open file");
+    //let mut file = File::open("tests/Obstacle.txt").expect("open file");
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).expect("read_to_end");
     let data: NavMeshData =
