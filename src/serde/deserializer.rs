@@ -53,7 +53,7 @@ impl<'de> UnityDeserializer<'de> {
         }
     }
 
-    fn skip_header(&mut self) {
+    fn skip_header(&mut self) -> super::Result<()> {
         let mut current_eol = 0;
         let pos = self
             .chars()
@@ -65,20 +65,31 @@ impl<'de> UnityDeserializer<'de> {
                 }
                 current_eol == 3
             })
-            .expect("skip_header");
-        self.skip(pos + 1);
+            .ok_or_else(|| UnityDeError::custom("skip file header failed"))?;
+        self.skip(pos + 1)
     }
 
     fn count_until(&self, d: char) -> usize {
-        self.chars().position(|c| c == d).expect("skip_until")
+        self.chars()
+            .position(|c| c == d)
+            .unwrap_or(self.remaining())
+    }
+
+    fn remaining(&self) -> usize {
+        self.data.len() - self.offset
     }
 
     fn chars(&self) -> Chars {
         self.data[self.offset..].chars()
     }
 
-    fn skip(&mut self, count: usize) {
-        self.offset += count;
+    fn skip(&mut self, count: usize) -> super::Result<()> {
+        if self.offset + count <= self.data.len() {
+            self.offset += count;
+            Ok(())
+        } else {
+            Err(UnityDeError::Eof)
+        }
     }
 
     fn skip_tab(&mut self, count: usize) -> super::Result<()> {
@@ -91,8 +102,7 @@ impl<'de> UnityDeserializer<'de> {
                 )));
             }
         }
-        self.skip(count);
-        Ok(())
+        self.skip(count)
     }
 
     fn skip_space(&mut self) -> super::Result<()> {
@@ -106,26 +116,35 @@ impl<'de> UnityDeserializer<'de> {
         }
     }
 
-    fn skip_until(&mut self, d: char) {
+    fn skip_until(&mut self, d: char) -> super::Result<()> {
         let pos = self.count_until(d);
-        self.skip(pos + 1);
+        self.skip(pos + 1)
     }
 
-    fn skip_line(&mut self) {
+    fn skip_line(&mut self) -> super::Result<()> {
         if let DeStatus::MultipleElement = self.current_status() {
+            Ok(())
         } else {
-            self.skip_until('\n');
+            self.skip_until('\n')
         }
     }
 
-    fn get_str(&mut self, len: usize) -> &'de str {
-        let ret = &self.data[self.offset..self.offset + len];
-        self.skip(len);
-        ret
+    fn get_str(&mut self, len: usize) -> super::Result<&'de str> {
+        if self.offset + len > self.data.len() {
+            Err(UnityDeError::Eof)
+        } else {
+            let ret = &self.data[self.offset..self.offset + len];
+            self.skip(len)?;
+            Ok(ret)
+        }
     }
 
-    fn peek_str(&self, len: usize) -> &'de str {
-        &self.data[self.offset..self.offset + len]
+    fn peek_str(&self, len: usize) -> super::Result<&'de str> {
+        if self.offset + len <= self.data.len() {
+            Ok(&self.data[self.offset..self.offset + len])
+        } else {
+            Err(UnityDeError::Eof)
+        }
     }
 
     fn peek_type(&mut self) -> super::Result<&str> {
@@ -145,49 +164,50 @@ impl<'de> UnityDeserializer<'de> {
         let pos = self
             .chars()
             .position(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '[' && c != ']')
-            .ok_or_else(|| UnityDeError::Eof)?;
-        Ok(self.get_str(pos))
+            .ok_or_else(|| UnityDeError::custom("identifier not found"))?;
+        self.get_str(pos)
     }
 
     fn next_char(&mut self) -> super::Result<char> {
         let ret = self.chars().next().ok_or_else(|| UnityDeError::Eof)?;
-        self.skip(1);
+        self.skip(1)?;
         Ok(ret)
     }
 
-    fn get_content(&mut self) -> &str {
+    fn get_content(&mut self) -> super::Result<&str> {
         let pos = self
             .chars()
             .position(|c| c == ' ' || c == '\r' || c == '\n')
-            .unwrap();
-        let content = self.get_str(pos);
-        content
+            .ok_or_else(|| UnityDeError::Eof)?;
+        self.get_str(pos)
     }
 
     fn get_content_by<T: FromStr>(&mut self) -> super::Result<T> {
-        let content = self.get_content();
+        let content = self.get_content()?;
         match T::from_str(content) {
             Ok(t) => {
-                self.skip_line();
+                self.skip_line()?;
                 Ok(t)
             }
             Err(_) => Err(UnityDeError::custom(format!("parse '{}' failed", content))),
         }
     }
 
-    fn skip_array_header(&mut self) {
-        //log::trace!("skip array header");
+    fn skip_array_header(&mut self) -> super::Result<()> {
         let count = self.count_until(':');
-        self.skip(count + 1);
+        self.skip(count + 1)
     }
 
     fn peek_line(&self) -> &str {
-        let pos = self.chars().position(|c| c == '\r' || c == '\n').unwrap();
-        self.peek_str(pos)
+        let pos = self
+            .chars()
+            .position(|c| c == '\r' || c == '\n')
+            .unwrap_or(self.data.len() - self.offset);
+        self.peek_str(pos).unwrap_or("")
     }
 
-    fn is_seq_multi(&self) -> bool {
-        self.regex.is_match(self.peek_line())
+    fn is_seq_multi(&self) -> super::Result<bool> {
+        Ok(self.regex.is_match(self.peek_line()))
     }
 
     fn is_empty(&self) -> bool {
@@ -197,11 +217,11 @@ impl<'de> UnityDeserializer<'de> {
 
 pub fn from_str<'a, T: Deserialize<'a>>(data: &'a str) -> super::Result<T> {
     let mut de = UnityDeserializer::from_str(data);
-    de.skip_header();
-    de.skip_until(')');
+    de.skip_header()?;
+    de.skip_until(')')?;
     let t = T::deserialize(&mut de)?;
-    de.skip_line();
-    de.skip_line();
+    de.skip_line()?;
+    de.skip_line()?;
     if de.is_empty() {
         Ok(t)
     } else {
@@ -347,7 +367,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
     {
         let id = self.peek_line();
         let ret = visitor.visit_str(id);
-        self.skip_line();
+        self.skip_line()?;
         ret
     }
 
@@ -355,10 +375,10 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let content = self.get_content();
+        let content = self.get_content()?;
         let len = content.len();
         let content = content[1..len - 1].into();
-        self.skip_line();
+        self.skip_line()?;
         visitor.visit_string(content)
     }
 
@@ -418,9 +438,9 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
     {
         //begin as ' (vector)'
         log::trace!("deserialize_seq:input='{}'", self.peek_line());
-        self.skip_line();
+        self.skip_line()?;
 
-        let typ = format!("{}", &visitor as &Expected);
+        let typ = format!("{}", &visitor as &dyn Expected);
         let (count, faked) = if typ.as_str() == "Hash128" {
             (16, true)
         } else {
@@ -502,7 +522,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
             )));
         }
         log::trace!("deserialize_struct: id={}, tab = {}", id, tab + 1);
-        self.skip_line();
+        self.skip_line()?;
         self.tab += 1;
         let access = UnityMapAccess::new(&mut self);
         let ret = visitor.visit_map(access);
@@ -627,6 +647,7 @@ impl<'a, 'de> UnitySeqAccess<'a, 'de> {
     }
 }
 
+#[allow(non_upper_case_globals)]
 const ArrayMemberColumns: usize = 25;
 
 impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
@@ -643,7 +664,7 @@ impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
         //input='\t\tdata (type) #0: value value ...'
         //input='\t\tdata (data,data) (type)...'
         if self.current == 0 && self.count != 0 {
-            if self.de.is_seq_multi() {
+            if self.de.is_seq_multi()? {
                 self.de.type_name = self.de.peek_type()?.into();
                 self.multiple = true;
                 self.de.status.push(DeStatus::MultipleElement);
@@ -658,13 +679,13 @@ impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
             if self.count != 0 {
                 self.de.status.pop();
             }
-            self.de.skip_line();
+            self.de.skip_line()?;
             return Ok(None);
         }
 
         if self.multiple {
             if self.current % ArrayMemberColumns == 0 {
-                self.de.skip_array_header();
+                self.de.skip_array_header()?;
             }
             self.de.skip_space()?;
         } else {
