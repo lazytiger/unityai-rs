@@ -131,7 +131,7 @@ impl<'de> Visitor<'de> for Hash128Visitor {
         for i in 0..16 {
             hash.bytes[i] = seq
                 .next_element()?
-                .ok_or_else(|| serde::de::Error::custom(format!("")))?;
+                .ok_or_else(|| serde::de::Error::custom(format!("Hash128 missing {}th byte", i)))?;
         }
         Ok(hash)
     }
