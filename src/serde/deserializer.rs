@@ -697,7 +697,6 @@ impl<'a, 'de> SeqAccess<'de> for UnitySeqAccess<'a, 'de> {
         }
         self.current += 1;
         log::trace!("next_element_seed:input='{}'", self.de.peek_line());
-        let ret = seed.deserialize(&mut *self.de).map(Some);
-        ret
+        seed.deserialize(&mut *self.de).map(Some)
     }
 }
