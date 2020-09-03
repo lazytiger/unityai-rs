@@ -72,7 +72,7 @@ impl<'de> UnityDeserializer<'de> {
     fn count_until(&self, d: char) -> usize {
         self.chars()
             .position(|c| c == d)
-            .unwrap_or(self.remaining())
+            .unwrap_or_else(|| self.remaining())
     }
 
     fn remaining(&self) -> usize {
@@ -239,17 +239,15 @@ impl<'de, 'a> Deserializer<'de> for &'a mut UnityDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        //TODO ignore unknown format
-        //There are two types of line.
-        //1. name content type
-        //2. content type
         match self.current_status() {
             DeStatus::StructKey => {
+                //name content type
                 log::trace!("deserialize_any:StructKey, input='{}'", self.peek_line());
-                return self.deserialize_identifier(visitor);
+                self.deserialize_identifier(visitor)
             }
             DeStatus::Invalid => unreachable!("invalid status"),
             _ => {
+                //2. content type
                 self.type_name = if let DeStatus::MultipleElement = self.current_status() {
                     self.type_name.as_str()
                 } else {

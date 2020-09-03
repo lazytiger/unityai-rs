@@ -1,4 +1,4 @@
-use serde::de::{Error, SeqAccess, Unexpected, Visitor};
+use serde::de::{Error, SeqAccess, Visitor};
 use serde::export::fmt::Display;
 use serde::export::Formatter;
 use serde::{Deserialize, Deserializer};
@@ -44,9 +44,9 @@ pub struct Vector3f {
     z: f32,
 }
 
-struct Vector3fVistor;
+struct Vector3fVisitor;
 
-impl<'de> Visitor<'de> for Vector3fVistor {
+impl<'de> Visitor<'de> for Vector3fVisitor {
     type Value = Vector3f;
 
     fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
@@ -57,43 +57,38 @@ impl<'de> Visitor<'de> for Vector3fVistor {
     where
         E: Error,
     {
-        let err = Error::invalid_value(Unexpected::Other(v), &self);
-        let bgn = v.chars().position(|c| c == '(').ok_or_else(|| err)?;
+        let bgn = v
+            .chars()
+            .position(|c| c == '(')
+            .ok_or_else(|| Error::custom(format!("no data found in {}", v)))?;
 
-        let err = Error::invalid_value(Unexpected::Other(&v[bgn..]), &self);
         let end = v[bgn + 1..]
             .chars()
             .position(|c| c == ')')
-            .ok_or_else(|| err)?;
+            .ok_or_else(|| Error::custom(format!("no data found in {}", &v[bgn + 1..])))?;
 
         let mut content = v[bgn + 1..bgn + end + 1].split_ascii_whitespace();
 
-        let err = Error::invalid_value(Unexpected::Other(v), &self);
-        let err2 = Error::invalid_value(Unexpected::Other(v), &self);
-        let x = content
-            .next()
-            .ok_or_else(|| err)?
-            .parse()
-            .or_else(|_| Err(err2))?;
+        let mut ret = Vector3f {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        for i in 0..3 {
+            let d = content
+                .next()
+                .ok_or_else(|| Error::custom(format!("no data{} found in {}", i, v)))?
+                .parse()
+                .map_err(|e| Error::custom(format!("{}", e)))?;
+            match i {
+                0 => ret.x = d,
+                1 => ret.y = d,
+                2 => ret.z = d,
+                _ => unreachable!(),
+            }
+        }
 
-        let err = Error::invalid_value(Unexpected::Other(v), &self);
-        let err2 = Error::invalid_value(Unexpected::Other(v), &self);
-        let y = content
-            .next()
-            .ok_or_else(|| err)?
-            .parse()
-            .or_else(|_| Err(err2))?;
-
-        let err = Error::invalid_value(Unexpected::Other(v), &self);
-        let err2 = Error::invalid_value(Unexpected::Other(v), &self);
-        let z = content
-            .next()
-            .ok_or_else(|| err)?
-            .parse()
-            .or_else(|_| Err(err2))?;
-
-        log::trace!("vector3f {} {} {}", x, y, z);
-        Ok(Vector3f { x, y, z })
+        Ok(ret)
     }
 }
 
@@ -102,7 +97,7 @@ impl<'de> Deserialize<'de> for Vector3f {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_str(Vector3fVistor)
+        deserializer.deserialize_str(Vector3fVisitor)
     }
 }
 
